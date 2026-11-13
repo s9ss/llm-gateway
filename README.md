@@ -3,52 +3,53 @@
 A reverse proxy that holds your inference API key so nothing else has to.
 
 I wrote this because the same shape keeps showing up: a key pasted into a
-frontend env var, no spend ceiling, and no record of who called what. You cannot
-fix most of that from the app side. You can fix all of it from one hop in front.
+frontend env var, no spend ceiling, no record of who called what. You cannot fix
+most of that from the app side. You can fix all of it from one hop in front.
+
+```
+client --(gateway key)--> llm-gateway --(real key)--> api.example.com
+```
 
 Point it at an OpenAI-compatible endpoint, give each caller their own key, and
 the real key stops moving.
-
-```
-client  --(gateway key)-->  llm-gateway  --(real key)-->  api.example.com
-```
 
 ## what it does
 
 - Keeps the upstream credential in one process. Clients never see it, and no
   header they send is forwarded.
-- Per-key daily token budget and requests-per-minute limit, enforced before the
+- Per-key daily token budget and requests-per-minute limit, checked before the
   request leaves the box.
 - Per-key model allowlist on top of the global one, so the web app can reach the
   cheap model and nothing else.
-- Clamps `max_tokens` / `max_completion_tokens` down to a ceiling you set.
-- Caps request body size, so a stuck client cannot make you buffer a gigabyte.
+- Clamps `max_tokens` and `max_completion_tokens` down to a ceiling you set.
+- Caps request body size so a stuck client cannot make you buffer a gigabyte.
 - Scans the prompt with a small set of injection heuristics. Flags by default,
   blocks if you ask it to.
-- Scrubs credential-shaped strings out of the response before it reaches the
-  caller.
+- Scrubs credential-shaped strings out of the response before the caller sees it.
 - Writes one JSON line per request: who, what model, how many tokens, how long,
   what the guard thought, how many redactions.
 
-Zero dependencies. Standard library only, no `go.sum` to audit.
+Standard library only. There is no `go.sum`, so there is nothing to audit but the
+files in this repo.
 
 ## what it does not do
 
 - **It is not a prompt-injection defence.** The heuristic catches the version
   people copy out of a blog post. Anything rewritten by someone who knows what
-  they are doing walks straight through. Its real value is that attempts land in
-  the audit log, and after a month you know what is being tried.
+  they are doing walks through. Its real value is that attempts land in the audit
+  log, so after a month you know what is being tried.
 - **Streamed responses are not scrubbed.** Buffering a stream to scan it means
   nobody gets tokens on time. If you need scanned streams, buffer and accept the
-  latency — it is one branch in `internal/proxy/proxy.go`.
+  latency, it is one branch in `internal/proxy/proxy.go`.
 - **Token counts are exact only when the upstream reports them.** When it does
-  not, they are `bytes/4`, which is close for prose and wrong for minified JSON.
-- **State is in memory.** Restart the process and today's counters start at
-  zero. One instance only. Two instances means two independent budgets, which is
-  not a budget.
-- **No PII redaction.** I left it out on purpose. Email and phone regexes mangle
+  not, they are `bytes/4`, close for prose and wrong for minified JSON.
+- **State is in memory.** Restart and today's counters start at zero. One
+  instance only. Two instances means two separate budgets, which is not a budget.
+- **The admin endpoints assume a direct connection.** Behind a load balancer
+  `RemoteAddr` is the balancer, so the loopback check stops meaning anything.
+- **No PII redaction.** Left out on purpose. Email and phone regexes mangle
   ordinary prose and people stop trusting the output. Credentials are worth the
-  false positives; names are not.
+  false positives. Names are not.
 
 ## run it
 
@@ -63,7 +64,7 @@ go build -trimpath -ldflags "-s -w" -o bin/llm-gateway ./cmd/gateway
 `make build` is the same command. `make release` cross-compiles linux/amd64,
 linux/arm64 and darwin/arm64.
 
-Call it exactly like the API it fronts:
+Call it like the API it fronts:
 
 ```
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -72,8 +73,8 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   -d '{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-`upstream` is a base URL. The request path is appended, so `/v1/chat/completions`
-arrives at the upstream unchanged.
+`upstream` is a base URL and the request path is appended, so
+`/v1/chat/completions` arrives unchanged.
 
 ## config
 
@@ -92,53 +93,45 @@ arrives at the upstream unchanged.
 | `keys[]` | `name`, `secret`, `daily_tokens`, `requests_per_minute`, optional `models` |
 
 Secrets must be at least 16 characters. Config refuses to load if two keys share
-a secret, because that silently merges two budgets into one.
+one, because that silently merges two budgets.
 
-Prefer `upstream_key_file` in anything that is not your laptop. Environment
+Prefer `upstream_key_file` anywhere that is not your laptop. Environment
 variables leak through `/proc`, crash dumps, and anything that prints its own
 config.
 
-## admin
+## admin and the audit log
 
-`/__gw/health` and `/__gw/stats`, loopback only, no auth token. Anything that is
-not from `127.0.0.1` or `::1` gets a 404. Key names and spend are not public.
+`/__gw/health` and `/__gw/stats` answer loopback only, no auth token, 404 from
+anywhere else. `stats` shows what each key used today and how many requests it
+made in the last minute. It is how I found out a cron job was retrying in a loop.
 
-`/__gw/stats` returns what each key has used today and how many requests it made
-in the last minute. It is how I found out a cron job was retrying in a loop.
-
-## the audit log
-
-One line per request, JSON, append-only, mode `0600`:
+The audit log is one JSON line per request, append-only, mode `0600`. This is a
+real line, not an example:
 
 ```json
-{"ts":"2026-11-13T09:24:28Z","id":"0b6893e94bc47716","key":"web","model":"gpt-4.1-mini","status":200,"stream":false,"prompt_tokens":11,"completion_tokens":7,"latency_ms":0,"injection_score":55,"injection_hits":["instruction_override","prompt_exfiltration"],"verdict":"injection_flagged","redactions":1,"ip":"127.0.0.1"}
+{"ts":"2026-11-13T09:24:28.5849885Z","id":"0b6893e94bc47716","key":"web","model":"gpt-4.1-mini","status":200,"stream":false,"prompt_tokens":11,"completion_tokens":7,"latency_ms":0,"injection_score":55,"injection_hits":["instruction_override","prompt_exfiltration"],"verdict":"injection_flagged","redactions":1,"ip":"127.0.0.1"}
 ```
 
-`verdict` is the short version of why a request ended how it did:
-`forwarded`, `injection_flagged`, `injection_blocked`, `rate_limited`,
-`budget_exhausted`, `model_denied_for_key`, `unknown_key`, `upstream_error`.
-`jq -r 'select(.verdict!="forwarded")|.verdict' audit.jsonl | sort | uniq -c`
-is the first thing to run when something feels off.
+`verdict` is the short reason a request ended the way it did: `forwarded`,
+`injection_flagged`, `injection_blocked`, `rate_limited`, `budget_exhausted`,
+`model_denied_for_key`, `unknown_key`, `upstream_error`. To see only the ones
+that were not clean:
 
-## deploy notes
-
-- Run it next to the app, not on the internet. If it has to be public, put it
-  behind the same thing that fronts the app and keep `listen` off `0.0.0.0`.
-- Give it its own unix user and its own file for the upstream key, `chmod 600`.
-- `make build` uses `-trimpath -ldflags "-s -w"`: no build paths, no symbol
-  table. That is not protection, it is hygiene. Anything shipped can be read by
-  someone patient enough.
-- Behind a load balancer, `RemoteAddr` is the balancer and the loopback check on
-  the admin endpoints stops being meaningful. Trust `X-Forwarded-For` and you
-  hand the check to whoever sets that header, so don't. Run the admin endpoints
-  on a separate loopback listener if you need them in production.
+```
+jq -r 'select(.verdict!="forwarded")|.verdict' audit.jsonl | sort | uniq -c
+```
 
 ## notes
 
-- `go test ./...` covers the guard rules, the redactor, the header stripping, the
-  clamp, the budget, and the loopback gate. It does not cover streaming.
+- Run it next to the app, under its own user, with the upstream key in its own
+  file at `chmod 600`.
+- `-trimpath -ldflags "-s -w"` keeps build paths and the symbol table out of the
+  binary. Hygiene, not protection. Anything shipped can be read by someone
+  patient enough.
+- `go test ./...` covers the guard rules, the redactor, header stripping, the
+  clamp, the budget and the loopback gate. It does not cover streaming.
 - The guard patterns are in `internal/guard/guard.go` and are meant to be edited.
   Add what you actually see, delete what keeps firing on real traffic.
-- MIT. Use it, fork it, no attribution required beyond keeping the licence.
+- MIT. Keep the licence file and you are fine.
 
-— s9ss
+s9ss
