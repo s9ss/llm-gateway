@@ -1,0 +1,4 @@
+bin/
+config.json
+audit.jsonl
+*.log

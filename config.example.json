@@ -1,0 +1,26 @@
+{
+  "listen": "127.0.0.1:8080",
+  "upstream": "http://127.0.0.1:9099",
+  "upstream_key": "sk-replace-this-with-the-real-upstream-key",
+  "models": ["gpt-4.1-mini", "gpt-4.1"],
+  "max_body_bytes": 32768,
+  "max_tokens": 2048,
+  "timeout_seconds": 120,
+  "injection_action": "flag",
+  "audit_path": "audit.jsonl",
+  "keys": [
+    {
+      "name": "web",
+      "secret": "web-dev-0000000000000000",
+      "daily_tokens": 200000,
+      "requests_per_minute": 60,
+      "models": ["gpt-4.1-mini"]
+    },
+    {
+      "name": "ops",
+      "secret": "ops-dev-1111111111111111",
+      "daily_tokens": 2000000,
+      "requests_per_minute": 240
+    }
+  ]
+}

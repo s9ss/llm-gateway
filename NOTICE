@@ -1,0 +1,8 @@
+llm-gateway
+https://github.com/s9ss/llm-gateway
+
+Written and maintained by Saud Al-Mutairi (s9ss / saudx0).
+
+The binary reports itself as "s9ss/llm-gateway" in /__gw/health and in every
+audit record. If you find this running somewhere and want to know where it came
+from, that string is the answer.
