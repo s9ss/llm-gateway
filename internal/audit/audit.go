@@ -29,8 +29,8 @@ type Record struct {
 	Err        string   `json:"error,omitempty"`
 }
 
-// Logger writes newline-delimited JSON. One writer, one file, no rotation —
-// point it at a pipe or a log shipper if you want history longer than a disk.
+// Logger writes newline-delimited JSON. One writer, one file, no rotation.
+// Point it at a pipe or a log shipper if you want history longer than a disk.
 type Logger struct {
 	mu  sync.Mutex
 	f   *os.File

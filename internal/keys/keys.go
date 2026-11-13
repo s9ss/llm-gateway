@@ -23,9 +23,8 @@ type Entry struct {
 	Models      map[string]bool
 }
 
-// Store tracks per-key state in memory. Everything resets when the process
-// restarts, which is fine for a single instance and wrong the moment you run
-// two of them. See the README before you scale this out.
+// In-memory only. Everything resets on restart, which is fine for one instance
+// and wrong the moment you run two.
 type Store struct {
 	mu       sync.Mutex
 	bySecret map[string]*Entry
@@ -65,10 +64,9 @@ func (s *Store) Lookup(secret string) (*Entry, error) {
 	return e, nil
 }
 
-// Admit runs the cheap checks before the request is forwarded. Token spend is
-// checked against the day's total but not reserved, because the real count is
-// only known after the upstream answers. A request that starts under budget can
-// push the key over it; the next one is refused.
+// Admit checks the budget but does not reserve against it. The real token count
+// is only known after the upstream answers, so a request that starts under
+// budget can push the key over it and the next one gets refused.
 func (s *Store) Admit(e *Entry, model string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

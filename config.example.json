@@ -1,7 +1,7 @@
 {
   "listen": "127.0.0.1:8080",
-  "upstream": "http://127.0.0.1:9099",
-  "upstream_key": "sk-replace-this-with-the-real-upstream-key",
+  "upstream": "https://api.openai.com",
+  "upstream_key": "sk-replace-me-with-the-real-upstream-key",
   "models": ["gpt-4.1-mini", "gpt-4.1"],
   "max_body_bytes": 32768,
   "max_tokens": 2048,

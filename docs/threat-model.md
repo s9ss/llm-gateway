@@ -1,18 +1,18 @@
 # threat model
 
-What this proxy is actually defending, and what it is not.
+What this proxy defends and what it does not.
 
-## what it is for
+## the actual problem
 
-The realistic failure is not a clever attacker. It is a key in a browser bundle,
-no spend ceiling, and nobody able to say which service burned the budget last
-Tuesday. The gateway exists to make those three things impossible:
+The realistic failure is not a clever attacker. It is a key sitting in a browser
+bundle, no spend ceiling, and nobody able to say which service burned the budget
+last Tuesday. Three things fix that:
 
 1. The upstream credential exists in one process, on one host, in one file.
 2. Every caller gets a key with its own ceiling and its own model list.
 3. Every request leaves a line with a name on it.
 
-That is the whole threat model. Everything below is detail.
+That is the whole model. The rest of this file is detail.
 
 ## assets
 
@@ -25,72 +25,72 @@ That is the whole threat model. Everything below is detail.
 
 ## what the design stops
 
-**Credential exposure on the client side.** The client never has the real key.
-A key extracted from a browser bundle is a gateway key, which has a budget and a
-model list and can be revoked by deleting four lines of config.
+**The client never holds the real key.** A key pulled out of a browser bundle is
+a gateway key. It has a budget, a model list, and can be revoked by deleting four
+lines of config.
 
 **Header smuggling.** The upstream request is built from scratch. Only
-`Content-Type`, `Accept`, and the gateway's own `Authorization` are set. A client
-sending `X-Forwarded-Host`, `Host`, `Cookie`, or its own `Authorization` changes
-nothing.
+`Content-Type`, `Accept` and the gateway's own `Authorization` are set, so a
+client sending `X-Forwarded-Host`, `Host`, `Cookie` or its own `Authorization`
+changes nothing.
 
-**Proxy hijack through the environment.** The transport has `Proxy: nil` rather
-than `ProxyFromEnvironment`. If someone can set `HTTPS_PROXY` on the host, they
-would otherwise receive every upstream request, including the key.
+**Proxy hijack through the environment.** The transport uses `Proxy: nil` instead
+of `ProxyFromEnvironment`. If someone can set `HTTPS_PROXY` on the host, they
+would otherwise receive every upstream request, key included.
 
 **Spend blowups from a bug.** Budget is checked before the request leaves. A
-retry loop in a client hits the rate limit in about a second instead of running
-all night.
+retry loop hits the rate limit in about a second instead of running all night.
 
-**Model escalation.** A cheap caller cannot reach an expensive model, even if it
+**Model escalation.** A cheap caller cannot reach an expensive model even if it
 knows the name.
 
-**Long completions used as a data channel.** `max_tokens` is clamped downward. A
+**Long completions as a data channel.** `max_tokens` is clamped downward, so a
 caller asking for 900k gets your ceiling.
 
 **Accidental credential leak in output.** If the model repeats a key it saw in
 context, the response is scrubbed before the client sees it.
 
 **Admin exposure.** `/__gw/*` answers only to loopback. A key name and a spend
-figure are not public information.
+figure are not public.
 
 ## what it does not stop
 
-**A determined prompt injection.** The heuristic is six regular expressions.
-Encoding, translation, indirection, or plain rewriting defeats it. It exists to
-produce audit lines, not to be a boundary. If your design requires that an
-injection cannot succeed, this is not the control you need.
+**A determined prompt injection.** Six regular expressions. Encoding,
+translation, indirection or plain rewriting defeats them. If your design requires
+that injection cannot succeed, this is not the control you need.
 
 **A malicious caller with a valid key.** They can spend their budget and reach
 their models. That is what a key is.
 
 **Credential theft from the host.** If someone can read `config.json` or the key
-file, they have the key. File permissions and a dedicated user are the control,
-not this program.
+file, they have the key. File permissions are the control, not this program.
 
 **Denial of service.** No connection limits beyond what the Go HTTP server gives
 you. `max_body_bytes` stops a large body, not ten thousand small ones.
 
-**A hostile upstream.** A compromised or malicious endpoint can return anything,
-including oversized responses up to the 8 MiB read cap, or hold the connection
-until the timeout. TLS verification is on and cannot be turned off through
-config, which is the part that matters.
+**A hostile upstream.** It can return anything up to the 8 MiB read cap, or hold
+the connection until the timeout. TLS verification is on and config cannot turn
+it off, which is the part that matters.
 
 **Multi-instance consistency.** Budgets live in memory. Two processes are two
-budgets. Scaling out needs a shared counter, which does not exist here yet.
+budgets. Scaling out needs a shared counter, which does not exist yet.
 
-## if I were attacking this
+## how I would break it
 
-1. Take a valid key from a client bundle, then use it inside its own limits and
-   look for what the model will repeat back. Redaction catches credential shapes,
-   not secrets phrased as prose.
-2. Read `config.json` if permissions are wrong. This is the shortest path and it
-   is why the file is `0600` and separate from the code.
-3. Fill the disk with audit lines. There is no rotation.
-4. Send a streamed request with a prompt injection, since streams skip redaction
-   and skip the guard on the way back.
-5. Look at `/__gw/stats` from a request that arrives through the load balancer,
-   and check whether `RemoteAddr` is still loopback when it gets there.
+Three of these are deployment, permissions or config. Three need code.
 
-Items 1 and 4 are the two that need design changes, not config changes. Both are
-listed above rather than hidden.
+1. Pull a valid key out of a client bundle and use it inside its own limits,
+   looking for what the model will repeat back. Redaction catches credential
+   shapes, not secrets phrased as prose. **Needs code.**
+2. Read `config.json` if permissions are wrong. Shortest path, and why the file
+   is `0600` and separate from the code. **Permissions.**
+3. Fill the disk with audit lines. No rotation exists. **Config.**
+4. Send a streamed request carrying an injection. Streams skip redaction, and the
+   guard only reads the way in. **Needs code.**
+5. Reach `/__gw/stats` through a load balancer and check whether `RemoteAddr` is
+   still loopback when it arrives. **Deployment.**
+6. Sit on a connection until the timeout, repeatedly, with a valid key. Nothing
+   caps concurrency per key. **Needs code.**
+
+Items 1, 4 and 6 are the real ones. All three are listed above rather than
+quietly omitted.

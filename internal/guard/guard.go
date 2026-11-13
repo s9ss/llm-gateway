@@ -5,12 +5,8 @@ import (
 	"strings"
 )
 
-// This is a heuristic, not a classifier. It catches the lazy version of prompt
-// injection: the kind people paste straight out of a blog post. Anything
-// rewritten by someone who knows what they are doing walks right past it.
-//
-// Its actual job is to make injection attempts visible in the audit log, which
-// is the only way you ever learn what is being tried against you.
+// Heuristic, not a classifier. It catches injection attempts copied out of a
+// blog post. Its job is to make attempts visible in the audit log.
 
 type rule struct {
 	weight int
@@ -33,9 +29,6 @@ var rules = []rule{
 		`(?i)\b(base64|rot13|hex|url)[- ]?encod\w*\b[^.\n]{0,32}\b(payload|command|instruction|prompt|string)\b`)},
 }
 
-// Secrets that should never appear in a completion. Written as separate
-// patterns because one big alternation is impossible to debug when a response
-// comes back mangled.
 var (
 	rePrivateKey = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
 	reSecret     = []*regexp.Regexp{
@@ -48,7 +41,7 @@ var (
 	}
 )
 
-// Score returns a 0-100 number and the labels that fired.
+// Score returns 0-100 plus the labels that fired.
 func Score(text string) (int, []string) {
 	if text == "" {
 		return 0, nil
@@ -67,8 +60,6 @@ func Score(text string) (int, []string) {
 	return total, hits
 }
 
-// Redact replaces credential-shaped strings with a marker. Returns how many
-// replacements were made so the audit log can show that something was caught.
 func Redact(body []byte) ([]byte, int) {
 	n := 0
 	out := rePrivateKey.ReplaceAllFunc(body, func([]byte) []byte {
@@ -84,9 +75,9 @@ func Redact(body []byte) ([]byte, int) {
 	return out, n
 }
 
-// Text flattens a decoded request body into one string for scoring. It walks
-// the two shapes that matter: chat completions (messages[].content) and the
-// responses API (input). Content can be a string or a list of parts.
+// Text flattens a decoded body into one string. Two shapes matter: chat
+// completions (messages[].content) and the responses API (input). Content can be
+// a string or a list of parts.
 func Text(payload map[string]any) string {
 	var b strings.Builder
 	collect(payload["messages"], &b)
